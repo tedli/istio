@@ -26,6 +26,7 @@ import (
 	"github.com/howeyc/fsnotify"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
+	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
 	"istio.io/istio/pilot/pkg/kube/inject"
@@ -77,6 +78,9 @@ var (
 				Port:                flags.port,
 				HealthCheckInterval: flags.healthCheckInterval,
 				HealthCheckFile:     flags.healthCheckFile,
+				ClientFactory: func() (kubernetes.Interface, error) {
+					return kube.CreateClientset(flags.kubeconfigFile, "")
+				},
 			}
 			wh, err := inject.NewWebhook(parameters)
 			if err != nil {

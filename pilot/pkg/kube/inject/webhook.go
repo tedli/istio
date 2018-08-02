@@ -34,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/apis/core/v1"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
@@ -52,6 +53,8 @@ var (
 
 const (
 	watchDebounceDelay = 100 * time.Millisecond
+
+	labelSidecarInjectKey = "istio-injection"
 )
 
 func init() {
@@ -84,6 +87,8 @@ type Webhook struct {
 	certFile   string
 	keyFile    string
 	cert       *tls.Certificate
+
+	clientFactory func() (kubernetes.Interface, error)
 }
 
 func loadConfig(injectFile, meshFile string) (*Config, *meshconfig.MeshConfig, error) {
@@ -134,6 +139,8 @@ type WebhookParameters struct {
 	// HealthCheckFile specifies the path to the health check file
 	// that is periodically updated.
 	HealthCheckFile string
+
+	ClientFactory func() (kubernetes.Interface, error)
 }
 
 // NewWebhook creates a new instance of a mutating webhook for automatic sidecar injection.
@@ -175,6 +182,7 @@ func NewWebhook(p WebhookParameters) (*Webhook, error) {
 		certFile:               p.CertFile,
 		keyFile:                p.KeyFile,
 		cert:                   &pair,
+		clientFactory:          p.ClientFactory,
 	}
 	// mtls disabled because apiserver webhook cert usage is still TBD.
 	wh.server.TLSConfig = &tls.Config{GetCertificate: wh.getCert}
@@ -480,6 +488,29 @@ func toAdmissionResponse(err error) *v1beta1.AdmissionResponse {
 	return &v1beta1.AdmissionResponse{Result: &metav1.Status{Message: err.Error()}}
 }
 
+func (wh Webhook) namespacePolicy(namespace string) (policy InjectionPolicy, err error) {
+	var client kubernetes.Interface
+	if client, err = wh.clientFactory(); err != nil {
+		return
+	}
+	var ns *corev1.Namespace
+	if ns, err = client.CoreV1().Namespaces().Get(namespace, metav1.GetOptions{}); err != nil {
+		return
+	}
+	if labels := ns.Labels; labels == nil {
+		return
+	} else if value, exist := labels[labelSidecarInjectKey]; !exist {
+		return
+	} else if value == string(InjectionPolicyDisabled) {
+		policy = InjectionPolicyDisabled
+		return
+	} else if value == string(InjectionPolicyEnabled) {
+		policy = InjectionPolicyEnabled
+		return
+	}
+	return
+}
+
 func (wh *Webhook) inject(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionResponse {
 	req := ar.Request
 	var pod corev1.Pod
@@ -494,7 +525,13 @@ func (wh *Webhook) inject(ar *v1beta1.AdmissionReview) *v1beta1.AdmissionRespons
 	log.Debugf("Object: %v", string(req.Object.Raw))
 	log.Debugf("OldObject: %v", string(req.OldObject.Raw))
 
-	if !injectRequired(ignoredNamespaces, wh.sidecarConfig.Policy, &pod.Spec, &pod.ObjectMeta) {
+	namespacePolicy, err := wh.namespacePolicy(ar.Request.Namespace)
+	if err != nil {
+		log.Errorf("Get namespace sidecar injection policy failed, namespace %s, %s", ar.Request.Namespace, err)
+		return toAdmissionResponse(err)
+	}
+
+	if !injectRequired(ignoredNamespaces, namespacePolicy, &pod.Spec, &pod.ObjectMeta) {
 		log.Infof("Skipping %s/%s due to policy check", pod.Namespace, pod.Name)
 		return &v1beta1.AdmissionResponse{
 			Allowed: true,

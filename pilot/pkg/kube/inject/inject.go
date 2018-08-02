@@ -281,7 +281,7 @@ func injectRequired(ignored []string, namespacePolicy InjectionPolicy, podSpec *
 	var required bool
 	switch namespacePolicy {
 	default: // InjectionPolicyOff
-		required = false
+		required = inject
 	case InjectionPolicyDisabled:
 		if useDefault {
 			required = false
