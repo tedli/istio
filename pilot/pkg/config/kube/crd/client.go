@@ -132,6 +132,16 @@ func (rc *restClient) init(kubeconfig string, context string) error {
 	return nil
 }
 
+func (rc *restClient) initByRestConfig(config *rest.Config) (err error) {
+	var client *rest.RESTClient
+	if client, err = rest.RESTClientFor(config); err != nil {
+		return
+	}
+	rc.restconfig = config
+	rc.dynamic = client
+	return
+}
+
 // createRESTConfig for cluster API server, pass empty config file for in-cluster
 func (rc *restClient) createRESTConfig(kubeconfig string, context string) (config *rest.Config, err error) {
 	config, err = kubecfg.BuildClientConfig(kubeconfig, context)
@@ -181,6 +191,20 @@ func NewClient(config string, context string, descriptor model.ConfigDescriptor,
 	}
 
 	return out, nil
+}
+
+func NewClientSet(config *rest.Config) (client *Client, err error) {
+	var clientSet map[string]*restClient
+	if clientSet, err = newClientSet(model.IstioConfigTypes); err != nil {
+		return
+	}
+	for _, cs := range clientSet {
+		if err = cs.initByRestConfig(config); err != nil {
+			return
+		}
+	}
+	client = &Client{clientset: clientSet}
+	return
 }
 
 // RegisterResources sends a request to create CRDs and waits for them to initialize
