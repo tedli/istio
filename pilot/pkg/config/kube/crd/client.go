@@ -133,6 +133,9 @@ func (rc *restClient) init(kubeconfig string, context string) error {
 }
 
 func (rc *restClient) initByRestConfig(config *rest.Config) (err error) {
+	if config, err = rc.wrapRestConfig(config); err != nil {
+		return
+	}
 	var client *rest.RESTClient
 	if client, err = rest.RESTClientFor(config); err != nil {
 		return
@@ -166,6 +169,28 @@ func (rc *restClient) createRESTConfig(kubeconfig string, context string) (confi
 	err = schemeBuilder.AddToScheme(types)
 	config.NegotiatedSerializer = serializer.DirectCodecFactory{CodecFactory: serializer.NewCodecFactory(types)}
 
+	return
+}
+
+func (rc restClient) wrapRestConfig(config *rest.Config) (wrapped *rest.Config, err error) {
+	shadowCopy := *config
+	shadowCopy.GroupVersion = &rc.apiVersion
+	shadowCopy.APIPath = "/apis"
+	shadowCopy.ContentType = runtime.ContentTypeJSON
+	types := runtime.NewScheme()
+	schemeBuilder := runtime.NewSchemeBuilder(
+		func(scheme *runtime.Scheme) error {
+			for _, kind := range rc.types {
+				scheme.AddKnownTypes(rc.apiVersion, kind.object, kind.collection)
+			}
+			meta_v1.AddToGroupVersion(scheme, rc.apiVersion)
+			return nil
+		})
+	if err = schemeBuilder.AddToScheme(types); err != nil {
+		return
+	}
+	shadowCopy.NegotiatedSerializer = serializer.DirectCodecFactory{CodecFactory: serializer.NewCodecFactory(types)}
+	wrapped = &shadowCopy
 	return
 }
 
