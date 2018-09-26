@@ -561,3 +561,10 @@ func (cl *Client) list(typ, namespace string, options ...meta_v1.ListOptions) ([
 func (cl *Client) List(typ, namespace string) ([]model.Config, error) {
 	return cl.list(typ, namespace)
 }
+
+func init() {
+	// this allows query istio crds with a label selector
+	k8sschema.Scheme.AddKnownTypes(
+		schema.GroupVersion{Group: "networking.istio.io", Version: "v1alpha3"},
+		&meta_v1.ListOptions{})
+}
