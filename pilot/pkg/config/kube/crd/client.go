@@ -41,6 +41,7 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 	kubecfg "istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/log"
+	k8sschema "k8s.io/client-go/kubernetes/scheme"
 )
 
 // IstioObject is a k8s wrapper interface for config objects
@@ -513,8 +514,12 @@ func (cl *Client) Delete(typ, name, namespace string) error {
 		Do().Error()
 }
 
-// List implements store interface
-func (cl *Client) List(typ, namespace string) ([]model.Config, error) {
+func (cl *Client) ListWithOptions(resourceType, namespace string, options meta_v1.ListOptions) (configs []model.Config, err error) {
+	configs, err = cl.list(resourceType, namespace, options)
+	return
+}
+
+func (cl *Client) list(typ, namespace string, options ...meta_v1.ListOptions) ([]model.Config, error) {
 	s, ok := knownTypes[typ]
 	if !ok {
 		return nil, fmt.Errorf("unrecognized type %q", typ)
@@ -529,10 +534,16 @@ func (cl *Client) List(typ, namespace string) ([]model.Config, error) {
 	}
 
 	list := knownTypes[schema.Type].collection.DeepCopyObject().(IstioObjectList)
-	errs := rc.dynamic.Get().
+
+	request := rc.dynamic.Get().
 		Namespace(namespace).
-		Resource(ResourceName(schema.Plural)).
-		Do().Into(list)
+		Resource(ResourceName(schema.Plural))
+
+	for index := range options {
+		request = request.VersionedParams(&options[index], k8sschema.ParameterCodec)
+	}
+
+	errs := request.Do().Into(list)
 
 	out := make([]model.Config, 0)
 	for _, item := range list.GetItems() {
@@ -544,4 +555,9 @@ func (cl *Client) List(typ, namespace string) ([]model.Config, error) {
 		}
 	}
 	return out, errs
+}
+
+// List implements store interface
+func (cl *Client) List(typ, namespace string) ([]model.Config, error) {
+	return cl.list(typ, namespace)
 }
